@@ -1,0 +1,9 @@
+{
+  "short_name": "Скам",
+  "name": "Скам Мессенджер",
+  "icons": [],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#e94560",
+  "background_color": "#1e1e2f"
+}
