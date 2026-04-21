@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useSubscription, SUBSCRIPTION_LEVELS, getLevelName, SUBSCRIPTION_LIMITS } from '../SubscriptionContext';
 import { db } from '../firebase';
-import { collection, getDocs, setDoc, doc, serverTimestamp, addDoc } from 'firebase/firestore';
+import { collection, getDocs, addDoc, serverTimestamp } from 'firebase/firestore';
 
 const SubscriptionPage = ({ onClose, currentUser, isDev }) => {
   const { level, expiresAt, setUserSubscription, dailyBotMessages, botMessagesLimit } = useSubscription();
@@ -24,10 +24,10 @@ const SubscriptionPage = ({ onClose, currentUser, isDev }) => {
         const users = [];
         const newStats = { free: 0, pro: 0, max: 0, premium: 0 };
         
-        subsSnapshot.forEach((doc) => {
-          const data = doc.data();
+        subsSnapshot.forEach((docSnap) => {
+          const data = docSnap.data();
           users.push({
-            id: doc.id,
+            id: docSnap.id,
             level: data.level || SUBSCRIPTION_LEVELS.FREE,
             expiresAt: data.expiresAt?.toDate(),
           });
@@ -110,10 +110,10 @@ const SubscriptionPage = ({ onClose, currentUser, isDev }) => {
       const subsSnapshot = await getDocs(collection(db, 'subscriptions'));
       const users = [];
       const newStats = { free: 0, pro: 0, max: 0, premium: 0 };
-      subsSnapshot.forEach((doc) => {
-        const data = doc.data();
+      subsSnapshot.forEach((docSnap) => {
+        const data = docSnap.data();
         users.push({
-          id: doc.id,
+          id: docSnap.id,
           level: data.level || SUBSCRIPTION_LEVELS.FREE,
           expiresAt: data.expiresAt?.toDate(),
         });

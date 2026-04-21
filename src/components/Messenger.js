@@ -99,7 +99,7 @@ const Messenger = ({ currentUser, isDev }) => {
 
   useEffect(() => {
     localStorage.setItem(LAST_READ_KEY, JSON.stringify(lastReadMessages));
-  }, [lastReadMessages]);
+  }, [lastReadMessages, LAST_READ_KEY]);
 
   useEffect(() => {
     const userRef = doc(db, 'users', currentUser);
@@ -120,8 +120,8 @@ const Messenger = ({ currentUser, isDev }) => {
     const q = query(collection(db, 'users'));
     return onSnapshot(q, (snapshot) => {
       const users = {};
-      snapshot.forEach((doc) => {
-        users[doc.id] = doc.data();
+      snapshot.forEach((docSnap) => {
+        users[docSnap.id] = docSnap.data();
       });
       setOnlineUsers(users);
       setAllUsers(Object.keys(users));
@@ -625,4 +625,4 @@ const Messenger = ({ currentUser, isDev }) => {
   );
 };
 
-export default Messenger;
+export default Messenger;ы
