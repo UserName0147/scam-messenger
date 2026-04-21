@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import EmojiPicker from './EmojiPicker';
 
-const ChatWindow = ({ chat, messages, currentUser, onSendMessage, onEditMessage, onDeleteMessage, isTyping, contacts, onTyping }) => {
+const ChatWindow = ({ chat, messages, currentUser, onSendMessage, onEditMessage, onDeleteMessage, isTyping, contacts, onTyping, onBack, isMobile }) => {
   const [text, setText] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
@@ -65,15 +65,22 @@ const ChatWindow = ({ chat, messages, currentUser, onSendMessage, onEditMessage,
 
   const handleFileSelect = (e) => {
     const file = e.target.files[0];
-    if (file) {
-      setSelectedFile(file);
-      if (file.type.startsWith('image/')) {
-        const reader = new FileReader();
-        reader.onload = (e) => setFilePreview({ type: 'image', url: e.target.result, name: file.name });
-        reader.readAsDataURL(file);
-      } else {
-        setFilePreview({ type: 'file', name: file.name, size: file.size });
-      }
+    if (!file) return;
+    
+    const maxSize = 5 * 1024 * 1024;
+    if (file.size > maxSize) {
+      alert(`Файл слишком большой! Максимальный размер: 5 МБ.\nВаш файл: ${(file.size / 1024 / 1024).toFixed(1)} МБ`);
+      fileInputRef.current.value = '';
+      return;
+    }
+    
+    setSelectedFile(file);
+    if (file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = (e) => setFilePreview({ type: 'image', url: e.target.result, name: file.name });
+      reader.readAsDataURL(file);
+    } else {
+      setFilePreview({ type: 'file', name: file.name, size: file.size });
     }
   };
 
@@ -160,6 +167,11 @@ const ChatWindow = ({ chat, messages, currentUser, onSendMessage, onEditMessage,
   return (
     <div className="chat-window" onClick={closeContextMenu}>
       <div className="chat-header">
+        {isMobile && (
+          <button className="mobile-back-btn" onClick={onBack}>
+            ←
+          </button>
+        )}
         <div className="chat-avatar" style={{ backgroundColor: getAvatarColor(chat.name) }}>
           {chat.type === 'group' ? '👥' : chat.name.charAt(0)}
         </div>
@@ -199,6 +211,7 @@ const ChatWindow = ({ chat, messages, currentUser, onSendMessage, onEditMessage,
           return (
             <div
               key={msg.id}
+              id={`msg-${msg.id}`}
               className={`message ${msg.sender === currentUser ? 'sent' : 'received'} ${isImage || isFile ? 'file-message' : ''}`}
               onContextMenu={(e) => handleContextMenu(e, msg)}
               onClick={() => navigator.clipboard?.writeText(msg.text || '')}
@@ -222,8 +235,16 @@ const ChatWindow = ({ chat, messages, currentUser, onSendMessage, onEditMessage,
               )}
               
               {isImage ? (
-                <div className="message-image" onClick={() => setShowFullImage(msg.content)}>
-                  <img src={msg.content} alt="Изображение" />
+                <div 
+                  className="message-image" 
+                  style={{ maxWidth: '200px', maxHeight: '200px', overflow: 'hidden', display: 'inline-block', cursor: 'pointer' }}
+                  onClick={() => setShowFullImage(msg.content)}
+                >
+                  <img 
+                    src={msg.content} 
+                    alt="Изображение" 
+                    style={{ maxWidth: '200px', maxHeight: '200px', width: 'auto', height: 'auto', objectFit: 'cover', borderRadius: '12px', display: 'block' }}
+                  />
                 </div>
               ) : isFile ? (
                 <div className="message-file">
@@ -281,7 +302,7 @@ const ChatWindow = ({ chat, messages, currentUser, onSendMessage, onEditMessage,
         <div className="file-preview-container">
           <div className="file-preview">
             {filePreview.type === 'image' ? (
-              <img src={filePreview.url} alt="Предпросмотр" />
+              <img src={filePreview.url} alt="Предпросмотр" style={{ maxWidth: '100px', maxHeight: '100px' }} />
             ) : (
               <div className="file-info">
                 <span>📎</span>
@@ -295,18 +316,9 @@ const ChatWindow = ({ chat, messages, currentUser, onSendMessage, onEditMessage,
       )}
       
       <form onSubmit={handleSubmit} className="message-input-form">
-        <input
-          type="file"
-          ref={fileInputRef}
-          onChange={handleFileSelect}
-          style={{ display: 'none' }}
-        />
-        <button type="button" className="emoji-toggle-btn" onClick={() => fileInputRef.current?.click()} title="Прикрепить файл">
-          📎
-        </button>
-        <button type="button" className="emoji-toggle-btn" onClick={() => setShowEmojiPicker(!showEmojiPicker)}>
-          😊
-        </button>
+        <input type="file" ref={fileInputRef} onChange={handleFileSelect} style={{ display: 'none' }} />
+        <button type="button" className="emoji-toggle-btn" onClick={() => fileInputRef.current?.click()} title="Прикрепить файл">📎</button>
+        <button type="button" className="emoji-toggle-btn" onClick={() => setShowEmojiPicker(!showEmojiPicker)}>😊</button>
         <input
           ref={inputRef}
           type="text"
@@ -318,10 +330,7 @@ const ChatWindow = ({ chat, messages, currentUser, onSendMessage, onEditMessage,
       </form>
       
       {showEmojiPicker && (
-        <EmojiPicker 
-          onSelectEmoji={handleEmojiSelect}
-          onClose={() => setShowEmojiPicker(false)}
-        />
+        <EmojiPicker onSelectEmoji={handleEmojiSelect} onClose={() => setShowEmojiPicker(false)} />
       )}
       
       {showFullImage && (
@@ -332,26 +341,14 @@ const ChatWindow = ({ chat, messages, currentUser, onSendMessage, onEditMessage,
       )}
       
       {contextMenu.show && contextMenu.message && (
-        <div 
-          className="context-menu"
-          style={{ top: contextMenu.y, left: contextMenu.x }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <button onClick={() => { handleReply(contextMenu.message); closeContextMenu(); }}>
-            ↩️ Ответить
-          </button>
+        <div className="context-menu" style={{ top: contextMenu.y, left: contextMenu.x }} onClick={(e) => e.stopPropagation()}>
+          <button onClick={() => { handleReply(contextMenu.message); closeContextMenu(); }}>↩️ Ответить</button>
           {contextMenu.message.sender === currentUser && (
-            <button onClick={() => { handleEdit(contextMenu.message); closeContextMenu(); }}>
-              ✏️ Редактировать
-            </button>
+            <button onClick={() => { handleEdit(contextMenu.message); closeContextMenu(); }}>✏️ Редактировать</button>
           )}
-          <button onClick={() => { handleCopy(contextMenu.message.text || ''); closeContextMenu(); }}>
-            📋 Копировать
-          </button>
+          <button onClick={() => { handleCopy(contextMenu.message.text || ''); closeContextMenu(); }}>📋 Копировать</button>
           {(contextMenu.message.sender === currentUser || currentUser === 'devscammessenger') && (
-            <button onClick={() => { handleDelete(contextMenu.message.id); closeContextMenu(); }}>
-              🗑️ Удалить
-            </button>
+            <button onClick={() => { handleDelete(contextMenu.message.id); closeContextMenu(); }}>🗑️ Удалить</button>
           )}
         </div>
       )}
