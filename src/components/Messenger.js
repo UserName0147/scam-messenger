@@ -625,4 +625,4 @@ const Messenger = ({ currentUser, isDev }) => {
   );
 };
 
-export default Messenger;ы
+export default Messenger;
