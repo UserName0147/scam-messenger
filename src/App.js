@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Auth from './components/Auth';
 import Messenger from './components/Messenger';
+import SubscriptionPage from './components/SubscriptionPage';
 import { ThemeProvider, useTheme } from './ThemeContext';
 import { SoundProvider, useSound } from './SoundContext';
 import { NotificationProvider, useNotification } from './NotificationContext';
@@ -67,6 +68,7 @@ const MaintenanceScreen = ({ onAdminLogin }) => {
 function AppContent() {
   const [user, setUser] = useState(null);
   const [maintenance, setMaintenance] = useState({ enabled: false, message: '' });
+  const [showSubscriptionPage, setShowSubscriptionPage] = useState(false);
   const { isDark, toggleTheme } = useTheme();
   const { soundEnabled, toggleSound } = useSound();
   const { enabled: notifyEnabled, toggleEnabled: toggleNotify } = useNotification();
@@ -129,7 +131,7 @@ function AppContent() {
             <>
               <span 
                 className={`user-badge ${user.isDev ? 'dev' : ''} subscription-${level}`}
-                onClick={() => setShowSubscriptionPage?.(true)}
+                onClick={() => setShowSubscriptionPage(true)}
                 style={{ cursor: 'pointer' }}
               >
                 {user.username || user.email?.split('@')[0]}
@@ -164,6 +166,14 @@ function AppContent() {
           <Messenger currentUser={user.email?.split('@')[0] || user.username} isDev={user.isDev} />
         )}
       </div>
+
+      {showSubscriptionPage && (
+        <SubscriptionPage
+          onClose={() => setShowSubscriptionPage(false)}
+          currentUser={user?.email?.split('@')[0] || user?.username}
+          isDev={user?.isDev}
+        />
+      )}
     </div>
   );
 }
