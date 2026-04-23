@@ -313,44 +313,47 @@ const Messenger = ({ currentUser, isDev }) => {
     handleBotResponse(lastMessage.text);
   }, [messages, selectedChat, isBotTyping, handleBotResponse]);
 
-  const handleSendMessage = async (text, file, replyTo) => {
-    if (!selectedChat) return;
+const handleSendMessage = async (text, file, replyTo) => {
+  if (!selectedChat) return;
 
-    if (file) {
-      const maxSize = getLimit('maxFileSize');
-      if (file.size > maxSize) {
-        const sizeMB = (file.size / 1024 / 1024).toFixed(1);
-        const maxMB = (maxSize / 1024 / 1024).toFixed(0);
-        alert(`Файл слишком большой (${sizeMB} МБ). Ваш тариф позволяет отправлять файлы до ${maxMB} МБ.`);
-        return;
-      }
+  if (file) {
+    const maxSize = getLimit('maxFileSize');
+    if (file.size > maxSize) {
+      const sizeMB = (file.size / 1024 / 1024).toFixed(1);
+      const maxMB = (maxSize / 1024 / 1024).toFixed(0);
+      alert(`Файл слишком большой (${sizeMB} МБ). Ваш тариф позволяет отправлять файлы до ${maxMB} МБ.`);
+      return;
     }
+  }
 
-    const newMsg = {
-      text: text || '',
-      type: file ? (file.type?.startsWith('image/') ? 'image' : 'file') : 'text',
-      fileName: file?.name,
-      fileSize: file?.size,
-      sender: currentUser,
-      chatId: selectedChat.id,
-      timestamp: serverTimestamp(),
-      replyTo: replyTo?.id || null,
-    };
-
-    if (file && file.type?.startsWith('image/')) {
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        newMsg.content = e.target.result;
-        await addDoc(collection(db, 'messages'), newMsg);
-      };
-      reader.readAsDataURL(file);
-    } else {
-      newMsg.content = file || text;
-      await addDoc(collection(db, 'messages'), newMsg);
-    }
-
-    playSendSound();
+  const newMsg = {
+    text: text || '',
+    type: file ? (file.type?.startsWith('image/') ? 'image' : 'file') : 'text',
+    sender: currentUser,
+    chatId: selectedChat.id,
+    timestamp: serverTimestamp(),
+    replyTo: replyTo?.id || null,
   };
+
+  if (file) {
+    newMsg.fileName = file.name;
+    newMsg.fileSize = file.size;
+  }
+
+  if (file && file.type?.startsWith('image/')) {
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      newMsg.content = e.target.result;
+      await addDoc(collection(db, 'messages'), newMsg);
+    };
+    reader.readAsDataURL(file);
+  } else {
+    newMsg.content = text;
+    await addDoc(collection(db, 'messages'), newMsg);
+  }
+
+  playSendSound();
+};
 
   const handleEditMessage = async (messageId, newText) => {
     const editWindow = getLimit('editWindow');
