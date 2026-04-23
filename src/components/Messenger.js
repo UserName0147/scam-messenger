@@ -33,7 +33,7 @@ const CONTACTS = [
   { id: '3', name: 'Скам Бот', type: 'bot' },
 ];
 
-const OPENROUTER_API_KEY = process.env.REACT_APP_OPENROUTER_KEY;
+const DEEPSEEK_API_KEY = process.env.REACT_APP_DEEPSEEK_KEY;
 
 const Messenger = ({ currentUser, isDev }) => {
   const GROUPS_STORAGE_KEY = `scam_groups_${currentUser}`;
@@ -239,24 +239,25 @@ const Messenger = ({ currentUser, isDev }) => {
     });
   }, [messages, currentUser, playReceiveSound, showNotification]);
 
-  const callOpenRouter = async (userMessage) => {
+  const callDeepSeek = async (userMessage) => {
     try {
-      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      const response = await fetch('https://api.deepseek.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+          Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
         },
         body: JSON.stringify({
-          model: 'google/gemini-2.0-flash-lite-001',
+          model: 'deepseek-chat',
           messages: [
             {
               role: 'system',
-              content: 'Ты — Скам Бот. Отвечай на русском, с юмором, коротко. Используй эмодзи.',
+              content: 'Ты — Скам Бот, созданный на базе DeepSeek. Ты находишься в мессенджере «Скам» — зеркальном отражении MAX. Отвечай на русском, с юмором и дерзостью. Используй эмодзи, будь полезным, но не занудой. Ты — душа этого мессенджера. Твой создатель — @devscammessenger.',
             },
             { role: 'user', content: userMessage },
           ],
-          max_tokens: 150,
+          max_tokens: 200,
+          temperature: 0.8,
         }),
       });
 
@@ -266,10 +267,10 @@ const Messenger = ({ currentUser, isDev }) => {
         return data.choices[0].message.content;
       }
 
-      return 'Что-то я завис... 🤔';
+      return 'Что-то я завис... Спроси ещё раз! 🤔';
     } catch (error) {
-      console.error('OpenRouter error:', error);
-      return 'Нет связи с нейросетью 🛠️';
+      console.error('DeepSeek error:', error);
+      return 'Не могу связаться с нейросетью DeepSeek. Проверь API-ключ. 🛠️';
     }
   };
 
@@ -287,7 +288,7 @@ const Messenger = ({ currentUser, isDev }) => {
 
     setIsBotTyping(true);
 
-    const aiResponse = await callOpenRouter(userMessage);
+    const aiResponse = await callDeepSeek(userMessage);
 
     const botMessage = {
       text: aiResponse,
@@ -313,47 +314,47 @@ const Messenger = ({ currentUser, isDev }) => {
     handleBotResponse(lastMessage.text);
   }, [messages, selectedChat, isBotTyping, handleBotResponse]);
 
-const handleSendMessage = async (text, file, replyTo) => {
-  if (!selectedChat) return;
+  const handleSendMessage = async (text, file, replyTo) => {
+    if (!selectedChat) return;
 
-  if (file) {
-    const maxSize = getLimit('maxFileSize');
-    if (file.size > maxSize) {
-      const sizeMB = (file.size / 1024 / 1024).toFixed(1);
-      const maxMB = (maxSize / 1024 / 1024).toFixed(0);
-      alert(`Файл слишком большой (${sizeMB} МБ). Ваш тариф позволяет отправлять файлы до ${maxMB} МБ.`);
-      return;
+    if (file) {
+      const maxSize = getLimit('maxFileSize');
+      if (file.size > maxSize) {
+        const sizeMB = (file.size / 1024 / 1024).toFixed(1);
+        const maxMB = (maxSize / 1024 / 1024).toFixed(0);
+        alert(`Файл слишком большой (${sizeMB} МБ). Ваш тариф позволяет отправлять файлы до ${maxMB} МБ.`);
+        return;
+      }
     }
-  }
 
-  const newMsg = {
-    text: text || '',
-    type: file ? (file.type?.startsWith('image/') ? 'image' : 'file') : 'text',
-    sender: currentUser,
-    chatId: selectedChat.id,
-    timestamp: serverTimestamp(),
-    replyTo: replyTo?.id || null,
-  };
-
-  if (file) {
-    newMsg.fileName = file.name;
-    newMsg.fileSize = file.size;
-  }
-
-  if (file && file.type?.startsWith('image/')) {
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      newMsg.content = e.target.result;
-      await addDoc(collection(db, 'messages'), newMsg);
+    const newMsg = {
+      text: text || '',
+      type: file ? (file.type?.startsWith('image/') ? 'image' : 'file') : 'text',
+      sender: currentUser,
+      chatId: selectedChat.id,
+      timestamp: serverTimestamp(),
+      replyTo: replyTo?.id || null,
     };
-    reader.readAsDataURL(file);
-  } else {
-    newMsg.content = text;
-    await addDoc(collection(db, 'messages'), newMsg);
-  }
 
-  playSendSound();
-};
+    if (file) {
+      newMsg.fileName = file.name;
+      newMsg.fileSize = file.size;
+    }
+
+    if (file && file.type?.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        newMsg.content = e.target.result;
+        await addDoc(collection(db, 'messages'), newMsg);
+      };
+      reader.readAsDataURL(file);
+    } else {
+      newMsg.content = text;
+      await addDoc(collection(db, 'messages'), newMsg);
+    }
+
+    playSendSound();
+  };
 
   const handleEditMessage = async (messageId, newText) => {
     const editWindow = getLimit('editWindow');
