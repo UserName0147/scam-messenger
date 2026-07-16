@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import EmojiPicker from './EmojiPicker';
 
-const ChatWindow = ({ chat, messages, currentUser, onSendMessage, onEditMessage, onDeleteMessage, isTyping, contacts, onTyping, onBack, isMobile }) => {
+const ChatWindow = ({ chat, messages, currentUser, onSendMessage, onEditMessage, onDeleteMessage, isTyping, contacts, onTyping, onBack, isMobile, isMuted, isPinned, onToggleMute, onTogglePin }) => {
   const [text, setText] = useState('');
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [selectedFile, setSelectedFile] = useState(null);
@@ -12,15 +12,29 @@ const ChatWindow = ({ chat, messages, currentUser, onSendMessage, onEditMessage,
   const [searchTerm, setSearchTerm] = useState('');
   const [showSearch, setShowSearch] = useState(false);
   const [contextMenu, setContextMenu] = useState({ show: false, x: 0, y: 0, message: null });
-  
+  const [isDragging, setIsDragging] = useState(false);
+  const [showScrollBtn, setShowScrollBtn] = useState(false);
+
   const bottomRef = useRef(null);
   const inputRef = useRef(null);
   const fileInputRef = useRef(null);
   const typingTimeoutRef = useRef(null);
+  const listRef = useRef(null);
+  const nearBottomRef = useRef(true);
 
+  const draftKey = (id) => `scam_draft_${currentUser}_${id}`;
+
+  // Автопрокрутка вниз только если пользователь уже внизу — иначе не мешаем читать историю
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (nearBottomRef.current) bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Черновик: подгружаем сохранённый текст при переключении чата
+  useEffect(() => {
+    setText(localStorage.getItem(`scam_draft_${currentUser}_${chat.id}`) || '');
+    nearBottomRef.current = true;
+    setShowScrollBtn(false);
+  }, [chat.id, currentUser]);
 
   useEffect(() => {
     return () => {
@@ -29,8 +43,13 @@ const ChatWindow = ({ chat, messages, currentUser, onSendMessage, onEditMessage,
   }, []);
 
   const handleInputChange = (e) => {
-    setText(e.target.value);
-    
+    const value = e.target.value;
+    setText(value);
+
+    // Черновик: сохраняем/чистим по мере набора
+    if (value.trim()) localStorage.setItem(draftKey(chat.id), value);
+    else localStorage.removeItem(draftKey(chat.id));
+
     if (onTyping) {
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
       onTyping(true);
@@ -51,10 +70,12 @@ const ChatWindow = ({ chat, messages, currentUser, onSendMessage, onEditMessage,
     
     if (text.trim() || selectedFile) {
       onSendMessage(text.trim(), selectedFile, replyingTo);
+      localStorage.removeItem(draftKey(chat.id));
       setText('');
       setSelectedFile(null);
       setFilePreview(null);
       setReplyingTo(null);
+      nearBottomRef.current = true;
     }
   };
 
@@ -63,25 +84,78 @@ const ChatWindow = ({ chat, messages, currentUser, onSendMessage, onEditMessage,
     inputRef.current?.focus();
   };
 
-  const handleFileSelect = (e) => {
-    const file = e.target.files[0];
+  const processFile = (file) => {
     if (!file) return;
-    
+
     const maxSize = 5 * 1024 * 1024;
     if (file.size > maxSize) {
       alert(`Файл слишком большой! Максимальный размер: 5 МБ.\nВаш файл: ${(file.size / 1024 / 1024).toFixed(1)} МБ`);
-      fileInputRef.current.value = '';
       return;
     }
-    
+
     setSelectedFile(file);
     if (file.type.startsWith('image/')) {
       const reader = new FileReader();
-      reader.onload = (e) => setFilePreview({ type: 'image', url: e.target.result, name: file.name });
+      reader.onload = (ev) => setFilePreview({ type: 'image', url: ev.target.result, name: file.name });
       reader.readAsDataURL(file);
     } else {
       setFilePreview({ type: 'file', name: file.name, size: file.size });
     }
+  };
+
+  const handleFileSelect = (e) => {
+    processFile(e.target.files[0]);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  // #21 Вставка изображения из буфера обмена (Ctrl+V)
+  const handlePaste = (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) {
+          processFile(file);
+          e.preventDefault();
+        }
+        break;
+      }
+    }
+  };
+
+  // #22 Drag-and-drop файла в окно чата
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    if (!isDragging) setIsDragging(true);
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    if (e.currentTarget.contains(e.relatedTarget)) return;
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer?.files?.[0];
+    if (file) processFile(file);
+  };
+
+  // #15 Кнопка «вниз» + отслеживание позиции прокрутки
+  const handleListScroll = () => {
+    const el = listRef.current;
+    if (!el) return;
+    const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+    nearBottomRef.current = dist < 120;
+    setShowScrollBtn(dist > 300);
+  };
+
+  const scrollToBottom = () => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    nearBottomRef.current = true;
+    setShowScrollBtn(false);
   };
 
   const removeFile = () => {
@@ -138,6 +212,32 @@ const ChatWindow = ({ chat, messages, currentUser, onSendMessage, onEditMessage,
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
   };
 
+  // #6 Форматирование: **жирный**, *курсив*, `код`, ~~зачёркнутый~~, ||спойлер||
+  const renderFormatted = (str) => {
+    if (!str) return null;
+    const regex = /(\*\*[^*]+\*\*|~~[^~]+~~|\|\|[^|]+\|\||`[^`]+`|\*[^*]+\*|_[^_]+_)/g;
+    const parts = [];
+    let last = 0;
+    let key = 0;
+    let m;
+    while ((m = regex.exec(str)) !== null) {
+      if (m.index > last) parts.push(str.slice(last, m.index));
+      const tok = m[0];
+      if (tok.startsWith('**')) parts.push(<strong key={key++}>{tok.slice(2, -2)}</strong>);
+      else if (tok.startsWith('~~')) parts.push(<s key={key++}>{tok.slice(2, -2)}</s>);
+      else if (tok.startsWith('||')) parts.push(
+        <span key={key++} className="spoiler" onClick={(e) => { e.stopPropagation(); e.currentTarget.classList.toggle('revealed'); }}>
+          {tok.slice(2, -2)}
+        </span>
+      );
+      else if (tok.startsWith('`')) parts.push(<code key={key++}>{tok.slice(1, -1)}</code>);
+      else parts.push(<em key={key++}>{tok.slice(1, -1)}</em>);
+      last = m.index + tok.length;
+    }
+    if (last < str.length) parts.push(str.slice(last));
+    return parts;
+  };
+
   const getAvatarColor = (name) => {
     const colors = ['#e94560', '#4a90e2', '#50c878', '#f5a623', '#9b59b6', '#1abc9c'];
     const index = name.charCodeAt(0) % colors.length;
@@ -165,7 +265,18 @@ const ChatWindow = ({ chat, messages, currentUser, onSendMessage, onEditMessage,
     : messages;
 
   return (
-    <div className="chat-window" onClick={closeContextMenu}>
+    <div
+      className="chat-window"
+      onClick={closeContextMenu}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {isDragging && (
+        <div className="drag-overlay">
+          <div className="drag-overlay-inner">📎 Отпустите файл, чтобы прикрепить</div>
+        </div>
+      )}
       <div className="chat-header">
         {isMobile && (
           <button className="mobile-back-btn" onClick={onBack}>
@@ -179,6 +290,20 @@ const ChatWindow = ({ chat, messages, currentUser, onSendMessage, onEditMessage,
           <h3>{chat.name}</h3>
           <span className="chat-status">{getChatStatus()}</span>
         </div>
+        <button
+          className="search-toggle-btn"
+          onClick={onTogglePin}
+          title={isPinned ? 'Открепить чат' : 'Закрепить чат наверх'}
+        >
+          {isPinned ? '📌' : '📍'}
+        </button>
+        <button
+          className="search-toggle-btn"
+          onClick={onToggleMute}
+          title={isMuted ? 'Включить уведомления' : 'Заглушить чат'}
+        >
+          {isMuted ? '🔕' : '🔔'}
+        </button>
         <button className="search-toggle-btn" onClick={() => setShowSearch(!showSearch)} title="Поиск">
           🔍
         </button>
@@ -200,7 +325,7 @@ const ChatWindow = ({ chat, messages, currentUser, onSendMessage, onEditMessage,
         </div>
       )}
       
-      <div className="message-list">
+      <div className="message-list" ref={listRef} onScroll={handleListScroll}>
         {filteredMessages.map(msg => {
           const senderName = msg.sender === currentUser ? currentUser : getSenderName(msg.sender);
           const isImage = msg.type === 'image';
@@ -253,7 +378,7 @@ const ChatWindow = ({ chat, messages, currentUser, onSendMessage, onEditMessage,
                   <span className="file-size">{formatFileSize(msg.fileSize)}</span>
                 </div>
               ) : (
-                <div className="message-text">{msg.text}</div>
+                <div className="message-text">{renderFormatted(msg.text)}</div>
               )}
               
               <div className="message-time">
@@ -277,7 +402,13 @@ const ChatWindow = ({ chat, messages, currentUser, onSendMessage, onEditMessage,
         
         <div ref={bottomRef} />
       </div>
-      
+
+      {showScrollBtn && (
+        <button className="scroll-down-btn" onClick={scrollToBottom} title="Вниз" aria-label="Прокрутить вниз">
+          ↓
+        </button>
+      )}
+
       {(replyingTo || editingMessage) && (
         <div className="reply-bar">
           <div className="reply-bar-content">
@@ -325,6 +456,7 @@ const ChatWindow = ({ chat, messages, currentUser, onSendMessage, onEditMessage,
           placeholder={editingMessage ? "Редактировать сообщение..." : "Написать сообщение..."}
           value={text}
           onChange={handleInputChange}
+          onPaste={handlePaste}
         />
         <button type="submit">{editingMessage ? '💾' : '➤'}</button>
       </form>

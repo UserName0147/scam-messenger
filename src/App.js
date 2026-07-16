@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Auth from './components/Auth';
 import Messenger from './components/Messenger';
 import SubscriptionPage from './components/SubscriptionPage';
+import SettingsModal from './components/SettingsModal';
 import { ThemeProvider, useTheme } from './ThemeContext';
 import { SoundProvider, useSound } from './SoundContext';
 import { NotificationProvider, useNotification } from './NotificationContext';
@@ -69,6 +70,7 @@ function AppContent() {
   const [user, setUser] = useState(null);
   const [maintenance, setMaintenance] = useState({ enabled: false, message: '' });
   const [showSubscriptionPage, setShowSubscriptionPage] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const { isDark, toggleTheme } = useTheme();
   const { soundEnabled, toggleSound } = useSound();
   const { enabled: notifyEnabled, toggleEnabled: toggleNotify } = useNotification();
@@ -157,6 +159,9 @@ function AppContent() {
           <button className="theme-toggle" onClick={toggleTheme}>
             {isDark ? '☀️' : '🌙'}
           </button>
+          <button className="theme-toggle" onClick={() => setShowSettings(true)} title="Настройки">
+            ⚙️
+          </button>
         </div>
       </header>
       <div className="App-content">
@@ -174,6 +179,8 @@ function AppContent() {
           isDev={user?.isDev}
         />
       )}
+
+      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
     </div>
   );
 }

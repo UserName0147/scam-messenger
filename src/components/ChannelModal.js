@@ -36,6 +36,7 @@ const ChannelModal = ({ currentUser, onClose, onChannelCreated }) => {
       text: `📢 Добро пожаловать в канал «${channelName}»!`,
       sender: 'system',
       chatId: channelId,
+      participants: [currentUser],
       timestamp: serverTimestamp(),
       type: 'system',
     });

@@ -16,7 +16,9 @@ const ContactList = ({
   onSecretChatClick,
   onChannelClick,
   hasFeature,
-  onCaseClick
+  onCaseClick,
+  mutedChats = [],
+  pinnedChats = []
 }) => {
   const getAvatarColor = (name) => {
     const colors = ['#e94560', '#4a90e2', '#50c878', '#f5a623', '#9b59b6', '#1abc9c'];
@@ -88,7 +90,11 @@ const ContactList = ({
                 {isGroup ? '👥' : contact.name.charAt(0)}
               </div>
               <div className="contact-info">
-                <div className="contact-name">{contact.name}</div>
+                <div className="contact-name">
+                  {pinnedChats.includes(contact.id) && <span className="contact-flag" title="Закреплён">📌</span>}
+                  {contact.name}
+                  {mutedChats.includes(contact.id) && <span className="contact-flag" title="Заглушён">🔕</span>}
+                </div>
                 <div className="contact-status">
                   {!isGroup && contact.id !== '3' && (
                     <span className={`status-dot ${status.online ? 'online' : ''}`}></span>

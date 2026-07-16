@@ -14,7 +14,7 @@ const SKINS = [
   { name: 'Дымовая граната', emoji: '💨', rarity: 'common', color: '#888', chance: 36 },
 ];
 
-const CaseSimulator = ({ currentUser, onClose, chatId }) => {
+const CaseSimulator = ({ currentUser, onClose, chatId, participants }) => {
   const { balance, spendScoin } = useScoin();
   const [spinning, setSpinning] = useState(false);
   const [result, setResult] = useState(null);
@@ -59,6 +59,7 @@ const CaseSimulator = ({ currentUser, onClose, chatId }) => {
           text: `🎁 ${currentUser} открыл кейс и получил: ${wonSkin.emoji} ${wonSkin.name} (${wonSkin.rarity})!`,
           sender: 'system',
           chatId: chatId,
+          participants: participants && participants.length ? participants : [currentUser],
           timestamp: serverTimestamp(),
           type: 'system',
         });

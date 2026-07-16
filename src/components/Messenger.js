@@ -18,7 +18,7 @@ import {
   collection,
   addDoc,
   query,
-  orderBy,
+  where,
   onSnapshot,
   serverTimestamp,
   doc,
@@ -35,9 +35,37 @@ const CONTACTS = [
 
 const DEEPSEEK_API_KEY = process.env.REACT_APP_DEEPSEEK_KEY;
 
+// Детерминированный id личной переписки: одинаковый у обоих собеседников,
+// поэтому обе стороны читают/пишут одну и ту же ветку сообщений.
+const dmChatId = (a, b) => `dm_${[a, b].sort().join('_')}`;
+
+// Кто имеет доступ к сообщению в данном чате. Используется для поля
+// participants у сообщений: клиент грузит только те сообщения, где он есть.
+const getChatParticipants = (chat, currentUser) => {
+  if (!chat) return [currentUser];
+  if (chat.type === 'group' || chat.type === 'secret') {
+    return chat.members && chat.members.length ? chat.members : [currentUser];
+  }
+  if (chat.type === 'channel') {
+    return chat.subscribers && chat.subscribers.length ? chat.subscribers : [currentUser];
+  }
+  if (chat.type === 'user' && chat.peer) return [currentUser, chat.peer];
+  return [currentUser]; // бот и демо-контакты — личные чаты пользователя
+};
+
+// Сколько входящих сообщений пришло после последнего прочитанного
+const countUnread = (chatMessages, lastReadId, currentUser) => {
+  const incoming = (list) => list.filter((msg) => msg.sender !== currentUser).length;
+  if (!lastReadId) return incoming(chatMessages);
+  const idx = chatMessages.findIndex((msg) => msg.id === lastReadId);
+  if (idx === -1) return incoming(chatMessages);
+  return incoming(chatMessages.slice(idx + 1));
+};
+
 const Messenger = ({ currentUser, isDev }) => {
-  const GROUPS_STORAGE_KEY = `scam_groups_${currentUser}`;
   const LAST_READ_KEY = `scam_last_read_${currentUser}`;
+  const MUTED_KEY = `scam_muted_${currentUser}`;
+  const PINNED_KEY = `scam_pinned_${currentUser}`;
 
   const [selectedChat, setSelectedChat] = useState(null);
   const [isBotTyping, setIsBotTyping] = useState(false);
@@ -65,10 +93,9 @@ const Messenger = ({ currentUser, isDev }) => {
   const prevMessagesRef = useRef({});
 
   const [messages, setMessages] = useState({});
-  const [groups, setGroups] = useState(() => {
-    const saved = localStorage.getItem(GROUPS_STORAGE_KEY);
-    return saved ? JSON.parse(saved) : [];
-  });
+  const [groups, setGroups] = useState([]);
+  const [channels, setChannels] = useState([]);
+  const [secretChats, setSecretChats] = useState([]);
   const [onlineUsers, setOnlineUsers] = useState({});
   const [allUsers, setAllUsers] = useState([]);
 
@@ -79,6 +106,33 @@ const Messenger = ({ currentUser, isDev }) => {
     const saved = localStorage.getItem(LAST_READ_KEY);
     return saved ? JSON.parse(saved) : {};
   });
+
+  // #73 Заглушённые чаты и #80 закреплённые чаты
+  const [mutedChats, setMutedChats] = useState(() => {
+    const saved = localStorage.getItem(MUTED_KEY);
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  const [pinnedChats, setPinnedChats] = useState(() => {
+    const saved = localStorage.getItem(PINNED_KEY);
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  useEffect(() => {
+    localStorage.setItem(MUTED_KEY, JSON.stringify(mutedChats));
+  }, [mutedChats, MUTED_KEY]);
+
+  useEffect(() => {
+    localStorage.setItem(PINNED_KEY, JSON.stringify(pinnedChats));
+  }, [pinnedChats, PINNED_KEY]);
+
+  const toggleMute = (chatId) => {
+    setMutedChats((prev) => (prev.includes(chatId) ? prev.filter((id) => id !== chatId) : [...prev, chatId]));
+  };
+
+  const togglePin = (chatId) => {
+    setPinnedChats((prev) => (prev.includes(chatId) ? prev.filter((id) => id !== chatId) : [...prev, chatId]));
+  };
 
   // Ежедневный бонус Scoin при входе
   useEffect(() => {
@@ -143,17 +197,27 @@ const Messenger = ({ currentUser, isDev }) => {
     const userChats = allUsers
       .filter((u) => u !== currentUser)
       .map((u) => ({
-        id: u,
+        id: dmChatId(currentUser, u),
+        peer: u,
         name: u,
         type: 'user',
         online: onlineUsers[u]?.online || false,
       }));
-    return [...CONTACTS, ...userChats, ...groups.map((g) => ({ ...g, type: 'group' }))];
-  }, [groups, allUsers, currentUser, onlineUsers]);
+    const all = [...CONTACTS, ...userChats, ...groups, ...channels, ...secretChats];
+    // #80 Закреплённые чаты — наверх, порядок остальных сохраняем
+    return all.sort((a, b) => {
+      const ap = pinnedChats.includes(a.id) ? 1 : 0;
+      const bp = pinnedChats.includes(b.id) ? 1 : 0;
+      return bp - ap;
+    });
+  }, [groups, channels, secretChats, allUsers, currentUser, onlineUsers, pinnedChats]);
 
   useEffect(() => {
+    if (!currentUser) return;
     const messagesRef = collection(db, 'messages');
-    const q = query(messagesRef, orderBy('timestamp', 'asc'));
+    // Грузим только сообщения, где текущий пользователь — участник.
+    // Сортируем на клиенте, чтобы не требовать составной индекс Firestore.
+    const q = query(messagesRef, where('participants', 'array-contains', currentUser));
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const allMessages = {};
@@ -167,11 +231,14 @@ const Messenger = ({ currentUser, isDev }) => {
           timestamp: data.timestamp?.toDate() || new Date(),
         });
       });
+      Object.keys(allMessages).forEach((chatId) => {
+        allMessages[chatId].sort((a, b) => a.timestamp - b.timestamp);
+      });
       setMessages(allMessages);
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [currentUser]);
 
   useEffect(() => {
     if (allChats.length > 0 && !selectedChat) {
@@ -179,25 +246,43 @@ const Messenger = ({ currentUser, isDev }) => {
     }
   }, [allChats, selectedChat]);
 
+  // Группы, каналы и секретные чаты синхронизируются через Firestore,
+  // поэтому их видят все участники, а не только создатель.
   useEffect(() => {
-    localStorage.setItem(GROUPS_STORAGE_KEY, JSON.stringify(groups));
-  }, [groups, GROUPS_STORAGE_KEY]);
+    if (!currentUser) return;
+    const q = query(collection(db, 'groups'), where('members', 'array-contains', currentUser));
+    return onSnapshot(q, (snapshot) => {
+      setGroups(snapshot.docs.map((d) => ({ ...d.data(), type: 'group' })));
+    });
+  }, [currentUser]);
 
-  const getUnreadCount = (chatId) => {
-    const chatMessages = messages[chatId] || [];
-    const lastReadId = lastReadMessages[chatId];
-    
-    if (!lastReadId) {
-      return chatMessages.filter(msg => msg.sender !== currentUser).length;
-    }
-    
-    const lastReadIndex = chatMessages.findIndex(msg => msg.id === lastReadId);
-    if (lastReadIndex === -1) return chatMessages.filter(msg => msg.sender !== currentUser).length;
-    
-    return chatMessages
-      .slice(lastReadIndex + 1)
-      .filter(msg => msg.sender !== currentUser).length;
-  };
+  useEffect(() => {
+    if (!currentUser) return;
+    const q = query(collection(db, 'channels'), where('subscribers', 'array-contains', currentUser));
+    return onSnapshot(q, (snapshot) => {
+      setChannels(snapshot.docs.map((d) => ({ ...d.data(), type: 'channel' })));
+    });
+  }, [currentUser]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    const q = query(collection(db, 'secretChats'), where('members', 'array-contains', currentUser));
+    return onSnapshot(q, (snapshot) => {
+      setSecretChats(snapshot.docs.map((d) => ({ ...d.data(), type: 'secret' })));
+    });
+  }, [currentUser]);
+
+  const getUnreadCount = (chatId) =>
+    countUnread(messages[chatId] || [], lastReadMessages[chatId], currentUser);
+
+  // #77 Счётчик непрочитанного в заголовке вкладки (заглушённые чаты не считаем)
+  useEffect(() => {
+    const total = Object.keys(messages).reduce((sum, chatId) => {
+      if (mutedChats.includes(chatId)) return sum;
+      return sum + countUnread(messages[chatId] || [], lastReadMessages[chatId], currentUser);
+    }, 0);
+    document.title = total > 0 ? `(${total}) Скам` : 'Скам';
+  }, [messages, lastReadMessages, mutedChats, currentUser]);
 
   const handleSelectChat = (chat) => {
     setSelectedChat(chat);
@@ -224,9 +309,10 @@ const Messenger = ({ currentUser, isDev }) => {
 
       if (currentMessages.length > prevMessages.length) {
         const newMsg = currentMessages[currentMessages.length - 1];
-        if (newMsg.sender !== currentUser) {
+        // #73 Заглушённые чаты не звучат и не шлют уведомлений
+        if (newMsg.sender !== currentUser && !mutedChats.includes(chatId)) {
           playReceiveSound();
-          
+
           if (document.visibilityState !== 'visible') {
             showNotification(`${newMsg.sender}`, {
               body: newMsg.text || (newMsg.type === 'image' ? '📷 Изображение' : '📎 Файл'),
@@ -237,7 +323,7 @@ const Messenger = ({ currentUser, isDev }) => {
 
       prevMessagesRef.current[chatId] = currentMessages;
     });
-  }, [messages, currentUser, playReceiveSound, showNotification]);
+  }, [messages, currentUser, playReceiveSound, showNotification, mutedChats]);
 
   const callDeepSeek = async (userMessage) => {
     try {
@@ -280,6 +366,7 @@ const Messenger = ({ currentUser, isDev }) => {
         text: `⚠️ Достигнут дневной лимит сообщений боту (${dailyBotMessages}/${botMessagesLimit}). Обновите подписку!`,
         sender: 'Скам Бот',
         chatId: '3',
+        participants: [currentUser],
         timestamp: serverTimestamp(),
       };
       await addDoc(collection(db, 'messages'), botMessage);
@@ -294,6 +381,7 @@ const Messenger = ({ currentUser, isDev }) => {
       text: aiResponse,
       sender: 'Скам Бот',
       chatId: '3',
+      participants: [currentUser],
       timestamp: serverTimestamp(),
     };
 
@@ -301,7 +389,7 @@ const Messenger = ({ currentUser, isDev }) => {
     incrementBotMessages();
 
     setIsBotTyping(false);
-  }, [canSendBotMessage, dailyBotMessages, botMessagesLimit, incrementBotMessages]);
+  }, [canSendBotMessage, dailyBotMessages, botMessagesLimit, incrementBotMessages, currentUser]);
 
   useEffect(() => {
     if (!selectedChat || selectedChat.id !== '3') return;
@@ -332,6 +420,7 @@ const Messenger = ({ currentUser, isDev }) => {
       type: file ? (file.type?.startsWith('image/') ? 'image' : 'file') : 'text',
       sender: currentUser,
       chatId: selectedChat.id,
+      participants: getChatParticipants(selectedChat, currentUser),
       timestamp: serverTimestamp(),
       replyTo: replyTo?.id || null,
     };
@@ -372,19 +461,24 @@ const Messenger = ({ currentUser, isDev }) => {
     await deleteDoc(messageRef);
   };
 
-  const handleCreateGroup = (name, memberIds) => {
+  const handleCreateGroup = async (name, memberIds) => {
     const maxGroups = getLimit('maxGroups');
     if (groups.length >= maxGroups) {
       alert(`Достигнут лимит групп (${maxGroups}). Обновите подписку, чтобы создавать больше групп.`);
       return;
     }
 
+    // Создатель всегда входит в участники, чтобы группа появилась у него в списке.
+    const members = Array.from(new Set([currentUser, ...memberIds]));
     const newGroup = {
       id: uuidv4(),
       name: name || `Группа ${groups.length + 1}`,
-      members: memberIds,
+      members,
+      type: 'group',
+      createdBy: currentUser,
+      createdAt: serverTimestamp(),
     };
-    setGroups((prev) => [...prev, newGroup]);
+    await addDoc(collection(db, 'groups'), newGroup);
     setSelectedChat(newGroup);
     if (isMobile) setShowChatOnMobile(true);
     setShowCreateGroup(false);
@@ -414,15 +508,28 @@ const Messenger = ({ currentUser, isDev }) => {
 
   if (!selectedChat) return <div className="loading">Загрузка...</div>;
 
+  // Индикатор показывается, когда печатает кто-то ДРУГОЙ (собеседник/участник),
+  // а не сам текущий пользователь.
   const isChatTyping =
     selectedChat.id === '3'
       ? isBotTyping
-      : typingUsers[selectedChat.id]?.[currentUser] || false;
+      : Object.entries(typingUsers[selectedChat.id] || {}).some(
+          ([user, typing]) => user !== currentUser && typing
+        );
 
   const unreadCounts = Object.keys(messages).reduce((acc, chatId) => {
     acc[chatId] = getUnreadCount(chatId);
     return acc;
   }, {});
+
+  // Реальные пользователи для выбора участников групп и секретных чатов.
+  const chatContacts = [
+    ...CONTACTS.filter((c) => c.type === 'user'),
+    ...allChats
+      .filter((c) => c.type === 'user')
+      .map((c) => ({ id: c.peer, name: c.name, type: 'user' })),
+  ];
+  const caseParticipants = getChatParticipants(selectedChat, currentUser);
 
   if (isMobile && !showChatOnMobile) {
     return (
@@ -445,11 +552,13 @@ const Messenger = ({ currentUser, isDev }) => {
             onChannelClick={() => setShowChannelModal(true)}
             hasFeature={hasFeature}
             onCaseClick={() => setShowCaseSimulator(true)}
+            mutedChats={mutedChats}
+            pinnedChats={pinnedChats}
           />
         </div>
         {showCreateGroup && (
           <CreateGroupModal
-            contacts={CONTACTS.filter((c) => c.type === 'user')}
+            contacts={chatContacts}
             onCreate={handleCreateGroup}
             onClose={() => setShowCreateGroup(false)}
           />
@@ -479,10 +588,9 @@ const Messenger = ({ currentUser, isDev }) => {
         {showSecretChat && (
           <SecretChat
             currentUser={currentUser}
-            contacts={CONTACTS.filter((c) => c.type === 'user')}
+            contacts={chatContacts}
             onClose={() => setShowSecretChat(false)}
             onChatCreated={(chat) => {
-              setGroups((prev) => [...prev, chat]);
               setSelectedChat(chat);
             }}
           />
@@ -492,7 +600,6 @@ const Messenger = ({ currentUser, isDev }) => {
             currentUser={currentUser}
             onClose={() => setShowChannelModal(false)}
             onChannelCreated={(channel) => {
-              setGroups((prev) => [...prev, channel]);
               setSelectedChat(channel);
             }}
           />
@@ -502,6 +609,7 @@ const Messenger = ({ currentUser, isDev }) => {
             currentUser={currentUser}
             onClose={() => setShowCaseSimulator(false)}
             chatId={selectedChat?.id}
+            participants={caseParticipants}
           />
         )}
       </>
@@ -523,6 +631,10 @@ const Messenger = ({ currentUser, isDev }) => {
           onTyping={handleTyping}
           onBack={handleBackToContacts}
           isMobile={true}
+          isMuted={mutedChats.includes(selectedChat.id)}
+          isPinned={pinnedChats.includes(selectedChat.id)}
+          onToggleMute={() => toggleMute(selectedChat.id)}
+          onTogglePin={() => togglePin(selectedChat.id)}
         />
       </div>
     );
@@ -559,6 +671,10 @@ const Messenger = ({ currentUser, isDev }) => {
           isTyping={isChatTyping}
           contacts={CONTACTS}
           onTyping={handleTyping}
+          isMuted={mutedChats.includes(selectedChat.id)}
+          isPinned={pinnedChats.includes(selectedChat.id)}
+          onToggleMute={() => toggleMute(selectedChat.id)}
+          onTogglePin={() => togglePin(selectedChat.id)}
         />
       </div>
 
@@ -601,7 +717,6 @@ const Messenger = ({ currentUser, isDev }) => {
           contacts={CONTACTS.filter((c) => c.type === 'user')}
           onClose={() => setShowSecretChat(false)}
           onChatCreated={(chat) => {
-            setGroups((prev) => [...prev, chat]);
             setSelectedChat(chat);
           }}
         />
@@ -612,7 +727,6 @@ const Messenger = ({ currentUser, isDev }) => {
           currentUser={currentUser}
           onClose={() => setShowChannelModal(false)}
           onChannelCreated={(channel) => {
-            setGroups((prev) => [...prev, channel]);
             setSelectedChat(channel);
           }}
         />

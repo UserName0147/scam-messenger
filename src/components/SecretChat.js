@@ -43,6 +43,7 @@ const SecretChat = ({ currentUser, contacts, onClose, onChatCreated }) => {
       text: `🔐 Секретный чат создан. Сообщения будут удаляться через ${selfDestructTime} секунд.`,
       sender: 'system',
       chatId,
+      participants: [currentUser, selectedContact],
       timestamp: serverTimestamp(),
       type: 'system',
     });

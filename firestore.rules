@@ -1,0 +1,114 @@
+rules_version = '2';
+
+// ШАГ 2 — целевые правила. Публиковать ТОЛЬКО ПОСЛЕ деплоя нового клиента,
+// который пишет в каждое сообщение поле participants и читает через
+// where('participants', 'array-contains', currentUser).
+//
+// Если опубликовать это на старом коде — приложение сломается у всех,
+// потому что старый клиент грузит всю коллекцию messages без фильтра.
+//
+// Известное следствие: старые сообщения без поля participants станут
+// недоступны (они и так уже не грузятся после правки ядра).
+//
+// По умолчанию всё, что не разрешено явно ниже, — запрещено.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // Тот же username, что строит клиент (App.js):
+    // префикс email, а если email нет (вход по телефону) — номер телефона.
+    function me() {
+      return ('email' in request.auth.token && request.auth.token.email != null)
+        ? request.auth.token.email.split('@')[0]
+        : request.auth.token.phone_number;
+    }
+
+    function isDev() {
+      return signedIn()
+        && 'email' in request.auth.token
+        && request.auth.token.email == 'p8973113@gmail.com';
+    }
+
+    // Читается до входа (экран обслуживания)
+    match /settings/{doc} {
+      allow read: if true;
+      allow write: if isDev();
+    }
+
+    // Присутствие: список онлайна видят все авторизованные,
+    // но писать можно только свой документ.
+    match /users/{username} {
+      allow read: if signedIn();
+      allow write: if signedIn() && username == me();
+    }
+
+    // Сообщения — только участникам переписки.
+    match /messages/{msgId} {
+      allow read: if signedIn() && me() in resource.data.participants;
+
+      // Отправитель — ты сам; бот и системные события пишутся клиентом
+      // в чат, где ты участник.
+      allow create: if signedIn()
+        && me() in request.resource.data.participants
+        && (request.resource.data.sender == me()
+            || request.resource.data.sender in ['Скам Бот', 'system']);
+
+      // Править и удалять — только своё (создателю можно всё).
+      allow update, delete: if signedIn()
+        && (resource.data.sender == me() || isDev());
+    }
+
+    // Группы и секретные чаты — только участникам.
+    match /groups/{id} {
+      allow read: if signedIn() && me() in resource.data.members;
+      allow create: if signedIn() && me() in request.resource.data.members;
+      allow update, delete: if signedIn() && me() in resource.data.members;
+    }
+
+    match /secretChats/{id} {
+      allow read: if signedIn() && me() in resource.data.members;
+      allow create: if signedIn() && me() in request.resource.data.members;
+      allow update, delete: if signedIn() && me() in resource.data.members;
+    }
+
+    // Каналы — подписчикам; менять/удалять может владелец.
+    match /channels/{id} {
+      allow read: if signedIn() && me() in resource.data.subscribers;
+      allow create: if signedIn() && me() in request.resource.data.subscribers;
+      allow update, delete: if signedIn() && resource.data.owner == me();
+    }
+
+    // Индикатор «печатает»
+    match /typing/{chatId} {
+      allow read, write: if signedIn();
+    }
+
+    // Балансы Scoin: читают все авторизованные (нужно для таблицы лидеров),
+    // писать можно только свой.
+    // ВНИМАНИЕ: баланс всё равно правится с клиента, то есть накрутить его
+    // себе технически можно. Без Cloud Functions (нужен план Blaze) это
+    // не закрывается — на Spark это принимаемое ограничение.
+    match /scoin_balances/{username} {
+      allow read: if signedIn();
+      allow write: if signedIn() && username == me();
+    }
+
+    // Подписки: свою читаешь сам, список видит только создатель,
+    // выдавать уровни может только создатель (иначе любой выдаст себе Premium).
+    match /subscriptions/{username} {
+      allow get: if signedIn() && (username == me() || isDev());
+      allow list: if isDev();
+      allow write: if isDev();
+    }
+
+    // Уведомления о выданной подписке: читаешь только адресованные тебе.
+    match /notifications/{id} {
+      allow read: if signedIn() && resource.data.userId == me();
+      allow create: if isDev();
+    }
+  }
+}
